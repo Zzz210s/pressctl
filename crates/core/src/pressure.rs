@@ -19,7 +19,7 @@ pub fn memory_used_percent(m: &MemoryMetrics) -> f32 {
     }
     let used = m.total_bytes.saturating_sub(m.available_bytes);
     let pct = used as f64 / m.total_bytes as f64 * 100.0;
-    (pct * 10.0).round() / 10.0
+    ((pct * 10.0).round() / 10.0) as f32
 }
 
 /// 依据阈值把已用内存百分比映射为压力等级(含等号:达到阈值即进入该级)。
