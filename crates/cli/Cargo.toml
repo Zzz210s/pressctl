@@ -1,0 +1,15 @@
+[package]
+name = "pressctl-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pressctl"
+path = "src/main.rs"
+
+[dependencies]
+pressctl-core = { path = "../core" }
+pressctl-win = { path = "../win" }
+clap = { workspace = true }
+serde_json = { workspace = true }
