@@ -12,6 +12,7 @@ pub fn render_json(d: &Decision, s: &Snapshot) -> Result<String, serde_json::Err
             "memory": s.memory,
             "cpu_used_percent": s.cpu_used_percent,
             "process_count": s.processes.len(),
+            "foreground_pids": s.foreground_pids,
             "config": s.config,
         },
         "decision": d,

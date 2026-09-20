@@ -7,13 +7,15 @@ pub mod cpu;
 pub mod foreground;
 pub mod memory;
 pub mod processes;
+pub mod tree;
 
 use pressctl_core::metrics::{PolicyConfig, Snapshot};
 
 /// CPU 采样窗口(毫秒)。CPU 是速率,必须两次采样求差。
 pub const CPU_WINDOW_MS: u64 = 300;
 
-/// 采集一次完整快照。整机与每进程 CPU 占用由 `cpu::sample_cpu` 填充。
+/// 采集一次完整快照。整机与每进程 CPU 占用由 `cpu::sample_cpu` 填充,
+/// 前台豁免集合包含前台窗口进程及其全部后代。
 pub fn snapshot(config: PolicyConfig) -> Snapshot {
     let sample = cpu::sample_cpu(CPU_WINDOW_MS);
 
