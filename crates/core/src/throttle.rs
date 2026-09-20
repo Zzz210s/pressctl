@@ -21,7 +21,7 @@ pub fn throttle_ratio(used_percent: f32, cfg: &PolicyConfig) -> f32 {
 
 /// 生成节流计划:只包含 CPU 占用大于 0 的进程,按 CPU 降序。
 /// 返回 `(进程引用, 保留比率)`。
-pub fn throttle_plan<'a>(procs: &'a [ProcessInfo], ratio: f32) -> Vec<(&'a ProcessInfo, f32)> {
+pub fn throttle_plan(procs: &[ProcessInfo], ratio: f32) -> Vec<(&ProcessInfo, f32)> {
     let mut v: Vec<(&ProcessInfo, f32)> = procs
         .iter()
         .filter(|p| p.cpu_percent > 0.0)
