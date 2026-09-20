@@ -7,4 +7,5 @@ pub mod decision;
 pub mod importance;
 pub mod metrics;
 pub mod pressure;
+pub mod report;
 pub mod throttle;
