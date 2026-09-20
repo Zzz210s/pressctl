@@ -3,6 +3,7 @@
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+pub mod decision;
 pub mod importance;
 pub mod metrics;
 pub mod pressure;
