@@ -3,19 +3,30 @@
 
 pub use pressctl_core as core;
 
+pub mod cpu;
 pub mod foreground;
 pub mod memory;
 pub mod processes;
 
 use pressctl_core::metrics::{PolicyConfig, Snapshot};
 
-/// 采集一次完整快照。CPU 使用率由 CLI 层通过两次采样补齐。
+/// CPU 采样窗口(毫秒)。CPU 是速率,必须两次采样求差。
+pub const CPU_WINDOW_MS: u64 = 300;
+
+/// 采集一次完整快照。整机与每进程 CPU 占用由 `cpu::sample_cpu` 填充。
 pub fn snapshot(config: PolicyConfig) -> Snapshot {
+    let sample = cpu::sample_cpu(CPU_WINDOW_MS);
+
+    let mut procs = processes::read_processes();
+    for p in &mut procs {
+        p.cpu_percent = sample.per_process.get(&p.pid).copied().unwrap_or(0.0);
+    }
+
     Snapshot {
         memory: memory::read_memory(),
-        processes: processes::read_processes(),
+        processes: procs,
         foreground_pids: foreground::foreground_pids(),
-        cpu_used_percent: 0.0,
+        cpu_used_percent: sample.system_percent,
         config,
     }
 }
