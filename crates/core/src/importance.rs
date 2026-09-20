@@ -80,6 +80,7 @@ mod tests {
             },
             processes: Vec::new(),
             foreground_pids: foreground.to_vec(),
+            frozen_pids: Vec::new(),
             cpu_used_percent: 10.0,
             config: PolicyConfig {
                 warn_percent: 85.0,

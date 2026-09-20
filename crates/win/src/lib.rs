@@ -28,6 +28,7 @@ pub fn snapshot(config: PolicyConfig) -> Snapshot {
         memory: memory::read_memory(),
         processes: procs,
         foreground_pids: foreground::foreground_pids(),
+        frozen_pids: Vec::new(),
         cpu_used_percent: sample.system_percent,
         config,
     }

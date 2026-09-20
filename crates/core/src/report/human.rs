@@ -18,6 +18,12 @@ fn describe(a: &Action) -> String {
         Action::ThrottleCpu { pid, name, ratio } => {
             format!("throttle cpu: {name} (pid {pid}) -> keep {ratio:.2}")
         }
+        Action::FreezeProcess { pid, name, reason } => {
+            format!("freeze process (REVERSIBLE): {name} (pid {pid}) - {reason}")
+        }
+        Action::ReleaseProcess { pid, name } => {
+            format!("release process (resume): {name} (pid {pid})")
+        }
         Action::KillProcess { pid, name, reason } => {
             format!("kill process (LAST RESORT): {name} (pid {pid}) - {reason}")
         }
@@ -65,6 +71,7 @@ mod tests {
             },
             processes: Vec::new(),
             foreground_pids: Vec::new(),
+            frozen_pids: Vec::new(),
             cpu_used_percent: 42.5,
             config: PolicyConfig {
                 warn_percent: 85.0,

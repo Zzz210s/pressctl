@@ -51,6 +51,9 @@ pub struct Snapshot {
     pub processes: Vec<ProcessInfo>,
     /// 前台窗口进程及其进程树内的所有 pid。
     pub foreground_pids: Vec<u32>,
+    /// 当前已被本工具挂起(冻结)的 pid 集合。
+    /// 用于在压力缓解后恢复,以及判断"冻结已无效,是否升级为终止"。
+    pub frozen_pids: Vec<u32>,
     /// 整机 CPU 占用百分比(0.0..=100.0)。
     pub cpu_used_percent: f32,
     pub config: PolicyConfig,
