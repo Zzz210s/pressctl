@@ -6,11 +6,15 @@ license.workspace = true
 
 [dependencies]
 pressctl-core = { path = "../core" }
+serde = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
   "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Console",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
   "Win32_System_ProcessStatus",
   "Win32_System_RemoteDesktop",
   "Win32_System_Threading",

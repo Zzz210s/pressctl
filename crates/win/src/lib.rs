@@ -3,7 +3,9 @@
 
 pub use pressctl_core as core;
 
+pub mod console;
 pub mod cpu;
+pub mod exec;
 pub mod foreground;
 pub mod memory;
 pub mod processes;

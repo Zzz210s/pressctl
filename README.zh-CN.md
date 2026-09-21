@@ -12,6 +12,7 @@
 - [决策阶梯](#决策阶梯)
 - [安装](#安装)
 - [使用](#使用)
+- [执行与安全](#执行与安全)
 - [架构](#架构)
 - [已知限制](#已知限制)
 - [开发](#开发)
@@ -34,10 +35,11 @@ pressctl 针对的是两者之间的空白:一个**由反馈驱动**的治理器
 
 ## 当前状态
 
-**MVP-1 是干跑决策引擎,不修改系统任何状态。**
+**默认模式是干跑:不修改任何状态。** 执行需要显式开启:`--apply`(一次性:清缓存与修剪工作集)
+或 `--watch`(常驻:完整阶梯,包含 CPU 上限与冻结,退出时回滚)。
 
-工具会采集一次快照、对每个进程分类、算出决策并打印出来。**不会**节流、修剪、冻结或终止
-任何进程。这一阶段的目的,是在写执行代码之前,让决策逻辑可审计、可测试。
+在已用内存 97.0% 的 16 GB 机器上实测:一次 `--apply` 修剪两个超阈值的进程后,
+已用内存降到 91.9%(回收约 800 MB)。
 
 ## 设计不变量
 
@@ -93,14 +95,19 @@ pressctl --whitelist node.exe,wallpaper64.exe
 全部参数:
 
 ```
-      --json                    输出 JSON 而非人读文本
-      --warn <WARN>             警戒阈值(已用内存百分比)[默认: 85]
-      --high <HIGH>             高压力阈值 [默认: 92]
-      --critical <CRITICAL>     临界阈值 [默认: 97]
-      --whitelist <WHITELIST>   白名单可执行文件名(逗号分隔,永不触碰)
-      --kill-enabled            允许在临界级别决策终止进程(本阶段仅决策)
-  -h, --help                    打印帮助
-  -V, --version                 打印版本
+      --json                              输出 JSON 而非人读文本(仅干跑模式)
+      --apply                             一次性施加安全动作(清待机列表、修剪工作集)
+      --watch                             常驻监视:循环决策并执行,退出时回滚
+      --interval <INTERVAL>               监视间隔秒数(配合 --watch)[默认: 5]
+      --max-iterations <MAX_ITERATIONS>   最多循环次数(用于验证;默认无限)
+      --release                           恢复状态文件中记录的被冻结进程后退出
+      --warn <WARN>                       警戒阈值(已用内存百分比)[默认: 85]
+      --high <HIGH>                       高压力阈值 [默认: 92]
+      --critical <CRITICAL>               临界阈值 [默认: 97]
+      --whitelist <WHITELIST>             白名单可执行文件名(逗号分隔,永不触碰)
+      --kill-enabled                      允许在持续临界时终止进程(最后手段)
+  -h, --help                              打印帮助
+  -V, --version                           打印版本
 ```
 
 在一台已用内存 95.6% 的机器上的真实输出:
@@ -123,6 +130,39 @@ notes:
 JSON 报告带有 `"schema_version": 1` 与 `"dry_run": true`,并包含受保护的前台 pid 集合,
 便于核对豁免是否生效。
 
+## 执行与安全
+
+执行从不隐式发生。三种模式:
+
+| 模式 | 做什么 | 可逆性 |
+| --- | --- | --- |
+| (默认) | 只打印决策 | 未施加任何变更 |
+| `--apply` | 清理待机列表、修剪工作集;需要常驻的动作记为 skipped | 可逆 |
+| `--watch` | 循环执行完整阶梯:CPU 上限、修剪、冻结,以及(仅在 `--kill-enabled` 时)终止 | 上限与冻结在退出时回滚 |
+
+执行层的安全性质:
+
+- **退出即回滚。** `--watch` 在退出前恢复所有被它冻结的进程、释放所有 CPU 上限,包括在
+  Ctrl+C 时(控制台处理器把中断变成优雅停止)。
+- **崩溃恢复。** 每次冻结都会把 pid 记入状态文件;若本工具被强杀,可用
+  `pressctl --release` 恢复其中记录的全部进程。
+- **CPU 上限依赖常驻。** 上限是运行中的进程持有的 Job Object,因此工具退出即释放。只有
+  `--watch` 能在运行期间维持上限;`--apply` 会把它记为 skipped,而不是假装它持续生效。
+- **终止不可逆**,因此它是唯一需要"持续临界 + 显式 `--kill-enabled`"双重条件的动作。
+
+常驻运行施加上限并回滚的真实输出:
+
+```
+[1] used 91.9%  level Warn  actions 4
+executed: 3 applied, 1 skipped, 0 failed
+  - purge standby list: skipped: NtSetSystemInformation 返回 0xC0000061(通常为权限不足)
+  - throttle rustc.exe (pid 15664) keep 0.75: applied: cpu rate capped to 75%
+  - throttle tail.exe (pid 27252) keep 0.75: applied: cpu rate capped to 75%
+
+rollback:
+  - 已释放 3 个 CPU 上限
+```
+
 ## 架构
 
 三个 crate,依赖方向单一:
@@ -144,9 +184,16 @@ pressctl-cli    参数解析、编排、输出。
 
 ## 已知限制
 
-- **仅干跑。** 目前不执行任何动作;执行层是下一个里程碑。
+- **清待机列表需要提权。** 该调用需要 `SeProfileSingleProcessPrivilege`;权限不足时记为
+  skipped(而非 failed),不影响其他动作。
+- **CPU 上限随工具退出而消失。** 它们是进程持有的 Job Object 句柄;要让上限持续生效,
+  需保持 `--watch` 运行。
+- **加入 Job 可能被拒绝。** 若目标进程已属于一个不允许嵌套的 Job,分配会失败;此种进程
+  记为失败并保持原样。
+- **冻结只挂起当下已存在的线程。** 之后新建的线程不会被挂起(使用的是文档化的
+  `SuspendThread`,而非未文档化的 `NtSuspendProcess`)。
 - **待机列表大小恒为 0。** 读取它需要未文档化的 `NtQuerySystemInformation`,为让其余指标
-  永不失败而刻意延后。因此报告里的"可回收"数字为 0 MB。
+  永不失败而刻意延后。因此报告里的“可回收”数字为 0 MB。
 - **每次运行有 300 ms 的 CPU 采样窗口开销** —— CPU 占用是速率,必须按差值测量。
 - **父链可能断裂。** Windows 不会在父进程退出后重挂父链,因此由已退出进程启动的进程无法
   回溯到它的终端。pressctl 用内置的交互宿主名单(shell、终端、桌面外壳)缓解这一问题;但
@@ -156,7 +203,7 @@ pressctl-cli    参数解析、编排、输出。
 ## 开发
 
 ```sh
-cargo test --workspace          # 50 个测试
+cargo test --workspace          # 59 个测试
 cargo clippy --workspace --all-targets
 ```
 
@@ -164,10 +211,9 @@ cargo clippy --workspace --all-targets
 
 ## 路线图
 
-- **MVP-2 执行层**:占空比 CPU 节流、Job Object 权重制 CPU 速率控制、修剪工作集、清待机
-  列表、冻结/恢复,以及作为最后手段的终止。所有动作可逆,异常退出时自动回滚。
-- **MVP-3** TOML 配置文件与常驻服务模式(轮询、执行、释放)。
-- **MVP-4** 完善:完整进程树追溯、可配置的保护名单。
+- **MVP-3** TOML 配置文件、常驻服务安装、已施加动作的历史记录。
+- **MVP-4** 完善:占空比 CPU 节流(作为 Job Object 上限的备选)、完整进程树追溯、
+  可配置的保护名单。
 
 ## 许可
 

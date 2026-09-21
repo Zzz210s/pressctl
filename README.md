@@ -12,6 +12,7 @@ English | [简体中文](README.zh-CN.md)
 - [Decision Ladder](#decision-ladder)
 - [Install](#install)
 - [Usage](#usage)
+- [Execution and Safety](#execution-and-safety)
 - [Architecture](#architecture)
 - [Limitations](#limitations)
 - [Development](#development)
@@ -36,11 +37,13 @@ last resort only — terminated.
 
 ## Current Status
 
-**MVP-1 is a dry-run decision engine. It performs no system modification.**
+**The default mode is a dry run: nothing is modified.** Execution is opt-in through `--apply`
+(one-shot: purge caches and trim working sets) or `--watch` (resident: the full ladder,
+including CPU caps and process freezing, with rollback on exit).
 
-The tool collects a snapshot, classifies every process, computes a decision, and prints it. No
-process is throttled, trimmed, frozen or terminated. This stage exists to make the decision
-logic auditable and testable before any execution code is written.
+Measured effect of a single `--apply` run on a 16 GB machine sitting at 97.0% memory usage:
+usage dropped to 91.9% (about 800 MB reclaimed) after trimming two processes above the size
+floor.
 
 ## Design Invariants
 
@@ -100,14 +103,19 @@ pressctl --whitelist node.exe,wallpaper64.exe
 All options:
 
 ```
-      --json                    Output JSON instead of human-readable text
-      --warn <WARN>             Warning threshold (used memory percent) [default: 85]
-      --high <HIGH>             High pressure threshold [default: 92]
-      --critical <CRITICAL>     Critical threshold [default: 97]
-      --whitelist <WHITELIST>   Whitelisted executable names (comma separated, never touched)
-      --kill-enabled            Allow deciding to terminate a process at critical pressure
-  -h, --help                    Print help
-  -V, --version                 Print version
+      --json                              Output JSON instead of human-readable text (dry run only)
+      --apply                             Apply the one-shot safe actions (purge standby, trim working sets)
+      --watch                             Resident mode: decide and act in a loop, roll back on exit
+      --interval <INTERVAL>               Seconds between watch iterations [default: 5]
+      --max-iterations <MAX_ITERATIONS>   Stop after N iterations (for verification; default unlimited)
+      --release                           Resume processes recorded in the state file, then exit
+      --warn <WARN>                       Warning threshold (used memory percent) [default: 85]
+      --high <HIGH>                       High pressure threshold [default: 92]
+      --critical <CRITICAL>               Critical threshold [default: 97]
+      --whitelist <WHITELIST>             Whitelisted executable names (comma separated, never touched)
+      --kill-enabled                      Allow terminating a process at sustained critical pressure
+  -h, --help                              Print help
+  -V, --version                           Print version
 ```
 
 Example output on a machine sitting at 95.6% memory usage:
@@ -129,6 +137,42 @@ notes:
 
 The JSON report carries `"schema_version": 1` and `"dry_run": true`, and includes the protected
 foreground pid set so that exemptions can be verified.
+
+## Execution and Safety
+
+Execution is never implicit. Three opt-in modes exist:
+
+| Mode | What it does | Reversible |
+| --- | --- | --- |
+| (default) | prints the decision only | nothing applied |
+| `--apply` | purges the standby list and trims working sets; actions that need residency are recorded as skipped | yes |
+| `--watch` | runs the full ladder in a loop: CPU caps, trimming, freezing, and (only with `--kill-enabled`) termination | caps and freezes are rolled back on exit |
+
+Safety properties of the execution layer:
+
+- **Rollback on exit.** `--watch` resumes every process it froze and releases every CPU cap
+  before exiting, including on Ctrl+C (a console control handler turns the interrupt into a
+  graceful stop).
+- **Crash recovery.** Frozen pids are written to a state file as they are applied. If the tool
+  is killed forcefully, `pressctl --release` resumes everything recorded there.
+- **CPU caps need residency.** A cap is a Job Object held by the running process, so it is
+  released when the tool exits. Only `--watch` keeps caps applied while it runs; `--apply`
+  records them as skipped rather than pretending they persisted.
+- **Termination is not reversible** and is therefore the only action that requires both
+  sustained critical pressure and an explicit `--kill-enabled`.
+
+Example of a resident run that applies caps and then rolls them back:
+
+```
+[1] used 91.9%  level Warn  actions 4
+executed: 3 applied, 1 skipped, 0 failed
+  - purge standby list: skipped: NtSetSystemInformation returned 0xC0000061 (usually insufficient privileges)
+  - throttle rustc.exe (pid 15664) keep 0.75: applied: cpu rate capped to 75%
+  - throttle tail.exe (pid 27252) keep 0.75: applied: cpu rate capped to 75%
+
+rollback:
+  - released 3 CPU caps
+```
 
 ## Architecture
 
@@ -154,7 +198,16 @@ processes) that are hard to reproduce on a real machine.
 
 ## Limitations
 
-- **Dry-run only.** No action is executed yet. The execution layer is the next milestone.
+- **Purging the standby list needs elevation.** The call requires
+  `SeProfileSingleProcessPrivilege`; without it the action is recorded as skipped (not failed)
+  and nothing else is affected.
+- **CPU caps vanish when the tool exits.** They are Job Object handles owned by the process.
+  Use `--watch` for as long as you want the caps to hold.
+- **Job assignment can be refused.** Assigning a process that already belongs to a job that
+  does not allow nesting fails; such a process is reported as a failure and left untouched.
+- **Freezing suspends the threads that exist at that moment.** Threads created afterwards are
+  not suspended (the documented `SuspendThread` path is used rather than the undocumented
+  `NtSuspendProcess`).
 - **Standby list size is always reported as 0.** Reading it requires the undocumented
   `NtQuerySystemInformation`; it is deliberately deferred so that the remaining metrics never
   fail. The "reclaimable" figure in the report is therefore 0 MB.
@@ -170,7 +223,7 @@ processes) that are hard to reproduce on a real machine.
 ## Development
 
 ```sh
-cargo test --workspace          # 50 tests
+cargo test --workspace          # 59 tests
 cargo clippy --workspace --all-targets
 ```
 
@@ -179,11 +232,10 @@ layer.
 
 ## Roadmap
 
-- **MVP-2** execution layer: duty-cycle CPU throttling, Job Object weighted CPU rate control,
-  working set trimming, standby list purge, freeze/resume, and termination as a last resort.
-  Every action is reversible and is rolled back if the tool exits unexpectedly.
-- **MVP-3** TOML configuration file and a resident service mode (poll, act, release).
-- **MVP-4** refinements: complete process tree tracing, configurable protection lists.
+- **MVP-3** TOML configuration file, resident service installation, and history of applied
+  actions.
+- **MVP-4** refinements: duty-cycle CPU throttling as an alternative to Job Object caps,
+  complete process tree tracing, configurable protection lists.
 
 ## License
 
